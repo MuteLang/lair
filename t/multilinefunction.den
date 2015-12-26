@@ -1,0 +1,12 @@
+multiline
+  println "False"
+  println "Spiral of fear"
+  println "Endless whirlybird"
+  ? = 1 0
+    println "1 equals 0 for some reason."
+  println "1 does not equal zero! Nice!"
+
+  ? = 1 1
+    println "1 equals 1! Nice"
+
+! multiline

@@ -1,3 +1,7 @@
+![Original picture David Greenwell](./lair.jpg?raw=true)
+
+[![Build Status](https://drone.io/github.com/qpfiffer/lair/status.png)](https://drone.io/github.com/qpfiffer/lair/latest)
+
 > "It is a dark world where all you have are functions, and all you can do is
 > apply them to each other." - Anonymous
 
@@ -6,8 +10,9 @@
 - [x] Can print stuff
 - [x] Arguments
 - [x] Functions-as-arguments
-- [ ] Loops
-- [ ] Arrays
+- [x] If statements ('?')
+- [x] Loops (In the form of recursion?)
+- [ ] Arrays/Dictionaries
 - [ ] Nested Functions
 
 This is an experimental [Den](http://wiki.xxiivv.com/den) implementation. It
@@ -23,11 +28,46 @@ much a learning process as anything else.
 * Persistent data structures
 * Immutability
 * Functions as first-class citizens
+* Low-memory footprint
 
 ### Installation
 
 1. `make`
 2. Thats it. You should now have a `lair` binary.
+
+#### Debugging
+
+Edit the `Makefile` to turn on the `DEBUG` flag, then rebuild:
+
+```Makefile
+    CFLAGS=-Werror -Wextra -Wall -g3 -Wno-missing-field-initializers -DDEBUG
+```
+
+```Bash
+    make clean
+    make
+```
+
+Now you'll get extra fancy, obtuse output:
+
+```Bash
+$ ./lair t/functions_all_the_way_down.den 
+FUNCTION a FUNCTION_ARG {
+    RETURN CALL ATOM ATOM 
+}
+FUNCTION b FUNCTION_ARG 
+    RETURN CALL ATOM ATOM 
+}
+FUNCTION c FUNCTION_ARG 
+    RETURN CALL ATOM 
+}
+FUNCTION d 
+    RETURN STRING 
+}
+CALL ATOM CALL ATOM ATOM EOF 
+---
+This is the real test.
+```
 
 ### Usage
 

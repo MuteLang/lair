@@ -16,3 +16,4 @@ id a
 ! print ! return_10
 ! print ! return_str
 ! print ! id "foo"
+! print ! random_array

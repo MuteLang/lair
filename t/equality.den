@@ -1,6 +1,23 @@
 isEqual a b
   ? = a b
-    : 1
-  : 0
+    : "True!"
+  : "False!"
 
-! print ! isEqual 4 4
+brokenNoTrue a b
+  ? = a b
+  : "False!"
+
+complexBranching a b
+  ? = a b
+    ? = a 1
+      : "a equals 1 equals b"
+    : "a equals b, but neither are 1."
+  : "Consequences will never be the same."
+
+! println ! isEqual 4 4
+! println ! isEqual 4 3
+! println ! complexBranching 1 1
+! println ! complexBranching 2 1
+! println ! complexBranching 2 2
+! println ! brokenNoTrue 4 4
+! println ! isEqual 4 "a"

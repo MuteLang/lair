@@ -1,4 +1,5 @@
 // vim: noet ts=4 sw=4
+#include <stdio.h>
 #include <string.h>
 
 #include "error.h"
@@ -21,11 +22,11 @@ static const _lair_type _lair_false = {
 	}
 };
 
-const inline _lair_type *_lair_canonical_false() {
+inline const _lair_type *_lair_canonical_false() {
 	return &_lair_false;
 }
 
-const inline _lair_type *_lair_canonical_true() {
+inline const _lair_type *_lair_canonical_true() {
 	return &_lair_true;
 }
 
@@ -35,10 +36,16 @@ _lair_env *_lair_standard_env() {
 	int rc = _lair_add_builtin_function(std_env, "print", 1, &_lair_builtin_print);
 	check(rc == 0, ERR_RUNTIME, "Could not build standard env.");
 
+	rc = _lair_add_builtin_function(std_env, "println", 1, &_lair_builtin_println);
+	check(rc == 0, ERR_RUNTIME, "Could not build standard env.");
+
 	rc = _lair_add_builtin_function(std_env, "+", 2, &_lair_builtin_operator_plus);
 	check(rc == 0, ERR_RUNTIME, "Could not build standard env.");
 
-	rc = _lair_add_builtin_function(std_env, "=", 1, &_lair_builtin_operator_eq);
+	rc = _lair_add_builtin_function(std_env, "=", 2, &_lair_builtin_operator_eq);
+	check(rc == 0, ERR_RUNTIME, "Could not build standard env.");
+
+	rc = _lair_add_builtin_function(std_env, "str", 2, &_lair_builtin_str);
 	check(rc == 0, ERR_RUNTIME, "Could not build standard env.");
 
 	return std_env;
@@ -161,14 +168,19 @@ static const _lair_type *_lair_call_runtime_function(const _lair_ast *top_level_
 	}
 }
 
-static const int _is_callable(const _lair_ast *n) {
+static int _is_callable(const _lair_ast *n) {
 	const LAIR_TOKEN t = n->atom.type;
-	if (t == LR_FUNCTION || t == LR_ATOM || t == LR_OPERATOR)
+	if (t == LR_FUNCTION || t == LR_ATOM || t == LR_OPERATOR || t == LR_IF)
 		return 1;
 	return 0;
 }
+
 static const _lair_type *_lair_call_function(const _lair_ast *ast_node, _lair_env *env) {
-	check(_is_callable(ast_node), ERR_RUNTIME, "Cannot call a non-function.");
+	if (!_is_callable(ast_node)) {
+		char buf[128] = {0};
+		snprintf(buf, sizeof(buf), "Cannot call a non-function: %s", _friendly_enum(ast_node->atom.type));
+		check(_is_callable(ast_node), ERR_RUNTIME, buf);
+	}
 	/* Determine if the thing we're trying to call is a function
 	 * or not. It might be an atom, in which case we need to check
 	 * or function/c_function maps to see if it's in there.
@@ -184,12 +196,23 @@ static const _lair_type *_lair_call_function(const _lair_ast *ast_node, _lair_en
 
 		/* Well if we're at this point this is a program-defined function. */
 		const _lair_ast *defined_function_ast = _tst_map_get(cur_env->functions, func_name, func_len);
-		if (defined_function_ast != NULL)
-			return _lair_call_runtime_function(ast_node, defined_function_ast, env);
+		if (defined_function_ast != NULL) {
+			/* Don't call it a stack frame. */
+			const _lair_ast *last_func = env->current_function;
+			env->current_function = defined_function_ast;
+			const _lair_type *value = _lair_call_runtime_function(ast_node, defined_function_ast, env);
+			env->current_function = last_func;
+			return value;
+		}
 
 		const _lair_ast *not_variable_ast = _tst_map_get(cur_env->not_variables, func_name, func_len);
-		if (not_variable_ast != NULL)
-			return _lair_call_function(not_variable_ast, env);
+		if (not_variable_ast != NULL) {
+			const _lair_ast *last_func = env->current_function;
+			env->current_function = defined_function_ast;
+			const _lair_type *value = _lair_call_function(not_variable_ast, env);
+			env->current_function = last_func;
+			return value;
+		}
 
 		cur_env = (_lair_env *)cur_env->parent;
 	}
@@ -234,11 +257,60 @@ static const _lair_ast *_infer_atom_at_runtime(const _lair_ast *ast_node, const 
 	return NULL;
 }
 
+static inline const _lair_ast *_evalute_if_statement(const _lair_ast *ast, _lair_env *env) {
+	const _lair_type *result = _lair_call_function(ast->next, env);
+	const unsigned int initial_indent_level = ast->indent_level;
+	if (result == _lair_canonical_true()) {
+		/* If we're true then we want to jump to the next AST item and make sure
+		 * that it's indentation level is *higher* than ours.
+		 */
+		while (ast->indent_level == initial_indent_level) {
+			if (ast->next == NULL)
+				error_and_die(ERR_SYNTAX, "Unexpected EOF.");
+			ast = ast->next;
+		}
+
+		check(ast->indent_level > initial_indent_level, ERR_SYNTAX, "No 'True' condition to follow.");
+	} else {
+		/* If we're false we just continue on to the next ast node LESS THAN OR EQUAL to ours.
+		*/
+		unsigned int skip_indent_level = ast->indent_level;
+		while (ast->indent_level == skip_indent_level) {
+			if (ast->next == NULL)
+				error_and_die(ERR_SYNTAX, "Unexpected EOF.");
+			ast = ast->next;
+			if (ast->atom.type == LR_INDENT && ast->indent_level > initial_indent_level)
+				skip_indent_level = ast->indent_level;
+			if (ast->indent_level < skip_indent_level)
+				break;
+		}
+	}
+
+	return ast;
+}
+
+static inline const _lair_ast *_continue(const _lair_ast *ast) {
+	/* Jump to next line here. */
+	while (ast->atom.type != LR_INDENT) {
+		ast = ast->next;
+		if (ast == NULL || ast->atom.type == LR_EOF)
+			break;
+	}
+	return ast;
+}
+
+static inline const _lair_ast *_call_and_continue(const _lair_ast *ast, _lair_env *env) {
+	_lair_call_function(ast, env);
+	ast = _continue(ast);
+	return ast;
+}
+
 /* Inline to avoid another stack frame. */
-const inline _lair_type *_lair_env_eval(const _lair_ast *ast, _lair_env *env) {
+inline const _lair_type *_lair_env_eval(const _lair_ast *ast, _lair_env *env) {
 	/* We have a goto here to avoid creating a new stack frame, when we really just
 	 * want to call this function again.
 	 */
+	/* THIS WHOLE FUCKING THING NEEDS A FINITE STATE MACHINE */
 	const _lair_ast *possible_new_atom = NULL;
 start_eval:
 	switch (ast->atom.type) {
@@ -246,20 +318,47 @@ start_eval:
 			return _lair_call_function(ast, env);
 		case LR_CALL:
 			return _lair_call_function(ast->next, env);
+		case LR_IF:
+			ast = _evalute_if_statement(ast, env);
+			goto start_eval;
+		case LR_DEDENT:
+			error_and_die(ERR_RUNTIME, "PANIC");
 		case LR_ATOM:
 			possible_new_atom = _infer_atom_at_runtime(ast, env);
-			if (possible_new_atom == NULL)
-				error_and_die(ERR_RUNTIME, "Atom is undefined.");
+			if (ast->next != NULL && ast->next->atom.type == LR_RETURN) {
+				/* Evaluate the RHS, get the value. */
+				const _lair_type *ret_val = _lair_env_eval(ast->next, env);
+				/* Now stick that value as a simple function under the name of
+				 * whatever the AST's atom is.
+				 */
+				_lair_add_simple_function(env, ast->atom.value.str, ret_val);
+				ast = _continue(ast);
+				if (ast == NULL)
+					return ret_val;
+				goto start_eval;
+			} else if (ast->prev != NULL && ast->prev->atom.type == LR_INDENT &&
+					_is_callable(ast)) {
+				ast = _call_and_continue(ast, env);
+				if (ast == NULL)
+					return &possible_new_atom->atom;
+				goto start_eval;
+			} else if (possible_new_atom == NULL) {
+				char buf[256] = {0};
+				snprintf(buf, sizeof(buf), "Atom is undefined: %s", ast->atom.value.str);
+				error_and_die(ERR_RUNTIME, buf);
+			}
 			return &possible_new_atom->atom;
 		case LR_INDENT:
+			env->currently_returning = 0;
 			ast = ast->next;
 			goto start_eval;
 		case LR_RETURN:
+			env->currently_returning = 1;
 			return _lair_env_eval(ast->next, env);
 		default:
 			return &ast->atom;
 	}
-	/* TODO: Expire anything in this scope. */
+	/* TODO: Expire anything in this scope. Probably. */
 
 	return NULL;
 }
